@@ -5,6 +5,7 @@ using AutoMapper;
 using AutoMapper.QueryableExtensions;
 using Contracts;
 using MassTransit;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -31,7 +32,7 @@ namespace ActionService.Controllers
         {
             var query = _context.Auctions.OrderBy(x => x.Item.Make).AsQueryable();
 
-            if(!string.IsNullOrEmpty(date))
+            if (!string.IsNullOrEmpty(date))
             {
                 query = query.Where(x => x.UpdatedAt.CompareTo(DateTime.Parse(date).ToUniversalTime()) > 0);
             }
@@ -54,14 +55,14 @@ namespace ActionService.Controllers
             return _mapper.Map<AuctionDto>(aution);
         }
 
+        [Authorize]
         [HttpPost]
-
         public async Task<ActionResult<AuctionDto>> CreateAuction(CreateAuctionDto createAuctionDto)
         {
             var auction = _mapper.Map<Auction>(createAuctionDto);
 
             //TODO: add current user as seller
-            auction.Seller = "test";
+            auction.Seller = User.Identity.Name;
 
             _context.Auctions.Add(auction);
 
@@ -70,15 +71,15 @@ namespace ActionService.Controllers
 
             var result = await _context.SaveChangesAsync() > 0;
 
-            
+
 
             if (!result) return BadRequest("Couldn't save changes into DB");
 
             return CreatedAtAction(nameof(GetAuctionById), new { auction.Id }, newAuction);
         }
 
+        [Authorize]
         [HttpPut("{id}")]
-
         public async Task<ActionResult> UpdateAuction(Guid id, UpdateAuctionDto updateAuctionDto)
         {
             var auction = await _context.Auctions.Include(x => x.Item)
@@ -88,12 +89,13 @@ namespace ActionService.Controllers
 
             //TODO: check seller == username
 
+            if (auction.Seller != User.Identity.Name) return Forbid();
             auction.Item.Make = updateAuctionDto.Make ?? auction.Item.Make;
             auction.Item.Model = updateAuctionDto.Model ?? auction.Item.Model;
             auction.Item.Color = updateAuctionDto.Color ?? auction.Item.Color;
             auction.Item.Mileage = updateAuctionDto.Mileage ?? auction.Item.Mileage;
             auction.Item.Year = updateAuctionDto.Year ?? auction.Item.Year;
-            
+
             await _publishEndpoint.Publish(_mapper.Map<AuctionUpdated>(auction));
 
             var result = await _context.SaveChangesAsync() > 0;
@@ -104,6 +106,7 @@ namespace ActionService.Controllers
 
         }
 
+        [Authorize]
         [HttpDelete("{id}")]
         public async Task<ActionResult> DeleteAuction(Guid id)
         {
@@ -111,6 +114,7 @@ namespace ActionService.Controllers
 
             if (auction == null) return NotFound();
 
+            if (auction.Seller != User.Identity.Name) return Forbid();
             _context.Auctions.Remove(auction);
 
             await _publishEndpoint.Publish<AuctionDeleted>(new { Id = auction.Id.ToString() });
